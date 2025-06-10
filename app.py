@@ -94,7 +94,8 @@ def oauth_callback():
         return "Недостаточно параметров для авторизации", 400
     logging.info("OAuth callback code: %s", code)
     try:
-        resp = requests.get('https://api.ok.ru/oauth/token.do', params={
+        # Обмен кода на токен через POST-запрос
+        resp = requests.post('https://api.ok.ru/oauth/token.do', data={
             'client_id':     OK_APP_ID,
             'client_secret': OK_SECRET_KEY,
             'redirect_uri':  'https://mpetsok.onrender.com/oauth/callback',
