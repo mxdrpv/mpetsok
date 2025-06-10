@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <script src="https://connect.ok.ru/connect.js" type="text/javascript"></script>
+  <script>
+    OK.init('CKOLANLGDIHBABABA');
+    function okLogin() {
+      OK.CONNECT.auth({
+        client_id: '512002624233',
+        scope: 'VALUABLE_ACCESS,LONG_ACCESS_TOKEN',
+        redirect_uri: 'https://mpetsok.onrender.com/oauth/callback',
+        display: 'popup'
+      });
+    }
+  </script>
+  <title>mpetsOK-bot</title>
+</head>
+<body style="display:flex; align-items:center; justify-content:center; height:100vh;">
+  <button onclick="okLogin()" style="padding:1em 2em; font-size:1.2em; cursor:pointer;">
+    Войти через ОК
+  </button>
+</body>
+</html>
