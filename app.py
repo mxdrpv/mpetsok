@@ -157,13 +157,10 @@ def telegram_webhook():
         # acknowledge
         requests.post(f'https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery', json={'callback_query_id': q['id']})
         if data == 'add_account':
-            state = uuid.uuid4().hex
-            STATE_MAP[state] = cid
-            oauth_url = (f"https://connect.ok.ru/oauth/authorize?client_id={OK_APP_ID}"  
-                         f"&redirect_uri=https://mpetsok.onrender.com/oauth/callback"  
-                         f"&scope=VALUABLE_ACCESS,LONG_ACCESS_TOKEN"  
-                         f"&response_type=code&state={state}")
-            send_telegram(cid, 'Нажми для авторизации:', {'inline_keyboard': [[{'text': 'Авторизоваться', 'url': oauth_url}]]})
+            # Открываем мини-приложение OK в Telegram Web App
+            mini_app_url = f"https://ok.ru/game/{OK_APP_ID}"
+            web_app_button = {'text': 'Запустить OK мини-приложение', 'web_app': {'url': mini_app_url}}
+            send_telegram(cid, 'Нажми для открытия мини-приложения Одноклассников:', {'inline_keyboard': [[web_app_button]]})
         elif data == 'on' and cid in AUTHORIZED:
             cookies = []  # TODO: load real cookies from DB
             task = asyncio.run_coroutine_threadsafe(auto_actions(cookies, cid), BG_LOOP)
