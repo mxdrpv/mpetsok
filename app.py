@@ -88,18 +88,32 @@ def index():
 
 @app.route('/oauth/callback')
 def oauth_callback():
+    # Обработка OAuth callback от ОК
     code = request.args.get('code')
+    if not code:
+        logging.error("OAuth callback without code")
+        return "Недостаточно параметров для авторизации", 400
     logging.info("OAuth callback code: %s", code)
-    resp = requests.get('https://api.ok.ru/oauth/token.do', params={
-        'client_id':     OK_APP_ID,
-        'client_secret': OK_SECRET_KEY,
-        'redirect_uri':  'https://mpetsok.onrender.com/oauth/callback',
-        'grant_type':    'authorization_code',
-        'code':          code
-    })
-    data = resp.json()
-    logging.info("OAuth token response: %s", data)
-    return 'Авторизация успешна! Можешь закрыть это окно.'
+    try:
+        resp = requests.get('https://api.ok.ru/oauth/token.do', params={
+            'client_id':     OK_APP_ID,
+            'client_secret': OK_SECRET_KEY,
+            'redirect_uri':  'https://mpetsok.onrender.com/oauth/callback',
+            'grant_type':    'authorization_code',
+            'code':          code
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        logging.info("OAuth token response: %s", data)
+        # TODO: сохранить data['access_token'], data['refresh_token'], data['user_id'] в БД
+        # Закрываем окно для пользователя после успешной авторизации
+        return ('<html><body>'
+                '<script>window.close();</script>'
+                'Авторизация успешна! Вы можете вернуться в Telegram.'
+                '</body></html>')
+    except Exception:
+        logging.exception("Ошибка при обмене кода на токен")
+        return "Ошибка сервера при авторизации", 500
 
 @app.route('/webhook', methods=['POST'])
 def ok_webhook():
