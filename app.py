@@ -12,7 +12,7 @@ OK_PUBLIC_KEY = os.getenv('OK_PUBLIC_KEY')
 OK_SECRET_KEY = os.getenv('OK_SECRET_KEY')
 OK_APP_ID     = os.getenv('OK_APP_ID')
 MPETS_API_URL = os.getenv('MPETS_API_URL')
-TG_BOT_TOKEN  = os.getenv('TG_BOT_TOKEN')  # Telegram bot token
+BOT_TOKEN  = os.getenv('BOT_TOKEN')  # Telegram bot token
 
 ### Утилиты ###
 def make_sig(params: dict) -> str:
@@ -27,7 +27,6 @@ def ok_api_request(method: str, params: dict) -> dict:
     return requests.post('https://api.ok.ru/fb.do', data=base).json()
 
 # Отправка сообщений от сообщества
-
 def send_ok(uid: str, text: str, template: dict = None):
     params = {'access_token': os.getenv(f'TOKEN_{uid}', ''), 'uid': uid, 'message': text}
     if template:
@@ -74,7 +73,7 @@ MAIN_MENU_TEMPLATE = {
 def send_main_menu(uid: str):
     return send_ok(uid, "Чё будем мутить?", MAIN_MENU_TEMPLATE)
 
-### Роуты ###
+### Роуты для OK ###
 @app.route('/')
 def index():
     return send_from_directory('templates', 'index.html')
@@ -129,6 +128,24 @@ def send_telegram(chat_id, text, reply_markup=None):
 @app.route('/telegram_webhook', methods=['POST'])
 def telegram_webhook():
     update = request.json
+    # Обработка нажатий inline-кнопок
+    if 'callback_query' in update:
+        query = update['callback_query']
+        chat_id = query['message']['chat']['id']
+        data = query.get('data')
+        # Подтверждаем запрос, чтобы исчез спиннер
+        requests.post(
+            f'https://api.telegram.org/bot{TG_BOT_TOKEN}/answerCallbackQuery',
+            json={'callback_query_id': query.get('id')}
+        )
+        if data == 'add_account':
+            url = f'https://ok.ru/game/{OK_APP_ID}'
+            keyboard = [[{'text': 'Авторизоваться в ОК', 'url': url}]]
+            send_telegram(chat_id, 'Нажми, чтобы добавить аккаунт:', {'inline_keyboard': keyboard})
+        elif data == 'manage_accounts':
+            send_telegram(chat_id, 'Управление аккаунтами пока не доступно.', None)
+        return jsonify({'ok': True})
+
     msg = update.get('message') or update.get('edited_message')
     if not msg:
         return jsonify({'ok': True})
@@ -137,12 +154,11 @@ def telegram_webhook():
     text = msg.get('text', '').strip().lower()
 
     if text == '/start':
-        # показываем меню
-        keyboard = [[{'text': 'Играть'}, {'text': 'Кормить'}],
-                    [{'text': 'Выставка'}, {'text': 'Прогулка'}],
-                    [{'text': 'Поляна'}]]
-        reply_markup = {'keyboard': keyboard, 'resize_keyboard': True}
-        send_telegram(chat_id, 'Привет! Выбери действие:', reply_markup)
+        keyboard = [
+            [{'text': 'Добавить аккаунт', 'callback_data': 'add_account'}],
+            [{'text': 'Управление аккаунтами', 'callback_data': 'manage_accounts'}]
+        ]
+        send_telegram(chat_id, 'Привет! Что хочешь сделать?', {'inline_keyboard': keyboard})
     else:
         handler = COMMAND_HANDLERS.get(text)
         if handler:
