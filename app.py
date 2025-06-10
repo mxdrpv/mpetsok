@@ -1,3 +1,4 @@
+# app.py
 from dotenv import load_dotenv
 load_dotenv()
 import os
@@ -148,10 +149,15 @@ def telegram_webhook():
             json={'callback_query_id': query.get('id')}
         )
         if data == 'add_account':
-            url = f'https://ok.ru/game/{OK_APP_ID}'
-            # Используем Web App кнопку, чтобы открыть мини-приложение прямо в Telegram
-            keyboard = [[{'text': 'Авторизоваться в ОК', 'web_app': {'url': url}}]]
-            send_telegram(chat_id, 'Нажми, чтобы добавить аккаунт:', {'inline_keyboard': keyboard})
+            # OAuth authorization link for OK Mini-App
+            oauth_url = (
+                f"https://connect.ok.ru/oauth/authorize?client_id={OK_APP_ID}"
+                f"&redirect_uri=https://mpetsok.onrender.com/oauth/callback"
+                f"&scope=VALUABLE_ACCESS,LONG_ACCESS_TOKEN"
+                f"&response_type=code"
+            )
+            keyboard = [[{'text': 'Авторизоваться в ОК', 'url': oauth_url}]]
+            send_telegram(chat_id, 'Перейди по ссылке для авторизации:', {'inline_keyboard': keyboard})
         elif data == 'manage_accounts':
             send_telegram(chat_id, 'Управление аккаунтами пока не доступно.', None)
         return jsonify({'ok': True})
