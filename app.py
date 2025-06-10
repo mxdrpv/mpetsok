@@ -12,7 +12,7 @@ import requests
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# Загружаем переменные окружения из .env
+# Загружаем переменные окружения
 load_dotenv()
 
 app = Flask(__name__)
@@ -24,15 +24,16 @@ OK_APP_ID     = os.getenv('OK_APP_ID')
 MPETS_API_URL = os.getenv('MPETS_API_URL')  # https://odkl.mpets.mobi
 BOT_TOKEN     = os.getenv('BOT_TOKEN')
 
-# Хранилище OAuth state и задач авто-режима
+# Хранилище OAuth state, авторизованных пользователей и задач авто-режима
 STATE_MAP = {}      # state -> chat_id
+AUTHORIZED = set()  # chat_id после OAuth
 TASKS = {}          # chat_id -> asyncio.Future
 
-# Создаём отдельный asyncio loop для фоновых задач
+# Запускаем отдельный asyncio loop для фоновых задач
 BG_LOOP = asyncio.new_event_loop()
 threading.Thread(target=BG_LOOP.run_forever, daemon=True).start()
 
-### Утилиты для работы с API Одноклассников ###
+### Утилиты для OK API ###
 def make_sig(params: dict) -> str:
     s = ''.join(f"{k}={v}" for k, v in sorted(params.items())) + OK_SECRET_KEY
     return hashlib.md5(s.encode('utf-8')).hexdigest()
@@ -51,18 +52,16 @@ def send_ok(uid: str, text: str, template: dict = None):
         params['template'] = template
     return ok_api_request('mediatopic.post', params)
 
-### Endpoints для OAuth ###
+### OAuth Callback ###
 @app.route('/oauth/callback')
 def oauth_callback():
     code = request.args.get('code')
     state = request.args.get('state')
     if not code or not state:
-        logging.error("Missing code or state in callback: %s %s", code, state)
+        logging.error("Invalid OAuth callback, missing code or state")
         return "Invalid callback parameters", 400
-
-    # Найти Telegram chat_id по state
     chat_id = STATE_MAP.pop(state, None)
-    logging.info("OAuth callback received: code=%s, state=%s", code, state)
+    logging.info("OAuth callback: code=%s state=%s chat_id=%s", code, state, chat_id)
     try:
         resp = requests.post('https://api.ok.ru/oauth/token.do', data={
             'client_id': OK_APP_ID,
@@ -75,17 +74,18 @@ def oauth_callback():
         data = resp.json()
         access_token = data.get('access_token')
         user_id = data.get('user_id') or data.get('session_key')
-        logging.info("OAuth token response: %s", data)
-        # TODO: сохранить access_token и user_id, ассоциировать с chat_id
+        logging.info("OAuth token received: %s", data)
         if chat_id:
-            send_telegram(chat_id, 'Авторизация в ОК успешна! Аккаунт добавлен.')
-        # Закрываем окно браузера
+            # помечаем пользователя как авторизованного
+            AUTHORIZED.add(chat_id)
+            # TODO: сохранить access_token и user_id в БД, связать с chat_id
+            send_telegram(chat_id, 'Авторизация ОК успешна!')
         return '<html><body><script>window.close();</script></body></html>'
     except Exception:
-        logging.exception("Error exchanging code for token")
+        logging.exception("Error during OAuth token exchange")
         return "Server error during OAuth", 500
 
-### Async авто-действия (Одноклассники) ###
+### Async Auto-Actions ###
 async def auto_actions(session_cookies, session_name):
     urls = [
         "https://odkl.mpets.mobi/?action=food",
@@ -97,7 +97,7 @@ async def auto_actions(session_cookies, session_name):
         "https://odkl.mpets.mobi/task_reward?id=49",
         "https://odkl.mpets.mobi/task_reward?id=52"
     ]
-    # Разворачиваем cookies
+    # собираем cookies
     if isinstance(session_cookies, list):
         cookies = {c['name']: c['value'] for c in session_cookies}
     else:
@@ -109,34 +109,36 @@ async def auto_actions(session_cookies, session_name):
         while True:
             task = asyncio.current_task()
             if task.cancelled():
-                logging.info(f"Auto actions for {session_name} cancelled")
+                logging.info(f"Auto-actions for {session_name} cancelled")
                 break
-            # Первые 4 действия по 6 раз
+            # первые 4 действия по 6 раз
             for url in urls[:4]:
                 for _ in range(6):
                     await visit_url(web_session, url, session_name)
                     await asyncio.sleep(1)
-            # Остальные по 1 разу
+            # остальные действия по разу
             for url in urls[4:]:
                 await visit_url(web_session, url, session_name)
                 await asyncio.sleep(1)
-            # Путешествия от id=10 до 1
+            # путешествия id от 10 до 1
             for i in range(10, 0, -1):
-                await visit_url(web_session, f"https://odkl.mpets.mobi/go_travel?id={i}", session_name)
+                travel_url = f"https://odkl.mpets.mobi/go_travel?id={i}"
+                await visit_url(web_session, travel_url, session_name)
                 await asyncio.sleep(1)
+            # пауза между циклами
             await asyncio.sleep(60)
 
 async def visit_url(web_session, url, session_name):
     try:
         async with web_session.get(url) as resp:
             if resp.status == 200:
-                logging.info(f"[{session_name}] Success {url}")
+                logging.info(f"[{session_name}] OK {url}")
             else:
-                logging.error(f"[{session_name}] Error {resp.status} {url}")
+                logging.error(f"[{session_name}] ERR {resp.status} {url}")
     except Exception as e:
-        logging.error(f"[{session_name}] Exception at {url}: {e}")
+        logging.error(f"[{session_name}] Exception {e} at {url}")
 
-### Интеграция с Telegram ###
+### Telegram Integration ###
 def send_telegram(chat_id, text, reply_markup=None):
     url = f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage'
     payload = {'chat_id': chat_id, 'text': text}
@@ -147,58 +149,56 @@ def send_telegram(chat_id, text, reply_markup=None):
 @app.route('/telegram_webhook', methods=['POST'])
 def telegram_webhook():
     update = request.json
-    # Callback query
+    # inline callback processing
     if 'callback_query' in update:
-        query = update['callback_query']
-        chat_id = query['message']['chat']['id']
-        data = query.get('data')
-        # Подтверждаем кнопку
-        requests.post(
-            f'https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery',
-            json={'callback_query_id': query['id']}
-        )
-        if data == 'on':
-            if chat_id in TASKS:
-                send_telegram(chat_id, 'Auto already running')
-            else:
-                # Получить cookies пользователя (из БД или сессии)
-                cookies = []  # TODO: заменить на реальные cookies
-                task = asyncio.run_coroutine_threadsafe(auto_actions(cookies, chat_id), BG_LOOP)
-                TASKS[chat_id] = task
-                send_telegram(chat_id, 'Auto actions enabled')
-        elif data == 'off':
-            task = TASKS.pop(chat_id, None)
+        q = update['callback_query']
+        cid = q['message']['chat']['id']
+        data = q.get('data')
+        # acknowledge
+        requests.post(f'https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery', json={'callback_query_id': q['id']})
+        if data == 'add_account':
+            state = uuid.uuid4().hex
+            STATE_MAP[state] = cid
+            oauth_url = (f"https://connect.ok.ru/oauth/authorize?client_id={OK_APP_ID}"  
+                         f"&redirect_uri=https://mpetsok.onrender.com/oauth/callback"  
+                         f"&scope=VALUABLE_ACCESS,LONG_ACCESS_TOKEN"  
+                         f"&response_type=code&state={state}")
+            send_telegram(cid, 'Нажми для авторизации:', {'inline_keyboard': [[{'text': 'Авторизоваться', 'url': oauth_url}]]})
+        elif data == 'on' and cid in AUTHORIZED:
+            cookies = []  # TODO: load real cookies from DB
+            task = asyncio.run_coroutine_threadsafe(auto_actions(cookies, cid), BG_LOOP)
+            TASKS[cid] = task
+            send_telegram(cid, 'Auto actions enabled')
+        elif data == 'off' and cid in AUTHORIZED:
+            task = TASKS.pop(cid, None)
             if task:
                 task.cancel()
-                send_telegram(chat_id, 'Auto actions disabled')
-            else:
-                send_telegram(chat_id, 'Auto not active')
+                send_telegram(cid, 'Auto actions disabled')
         return jsonify(ok=True)
-
-    # Message handling
+    # message handling
     msg = update.get('message')
-    if not msg:
-        return jsonify(ok=True)
-    chat_id = msg['chat']['id']
-    text = msg.get('text', '').strip().lower()
-    if text == '/start':
-        keyboard = [
-            [{'text': 'ON', 'callback_data': 'on'}],
-            [{'text': 'OFF', 'callback_data': 'off'}]
-        ]
-        send_telegram(chat_id, 'Manage auto actions:', {'inline_keyboard': keyboard})
+    if msg and 'text' in msg:
+        cid = msg['chat']['id']
+        txt = msg['text'].strip().lower()
+        if txt == '/start':
+            if cid not in AUTHORIZED:
+                kb = [[{'text': 'Добавить аккаунт', 'callback_data': 'add_account'}]]
+                send_telegram(cid, 'Сначала авторизуйся в ОК', {'inline_keyboard': kb})
+            else:
+                kb = [[{'text': 'ON', 'callback_data': 'on'}], [{'text': 'OFF', 'callback_data': 'off'}]
+                send_telegram(cid, 'Управление авто-режимом', {'inline_keyboard': kb})
     return jsonify(ok=True)
+
+@app.route('/webhook', methods=['POST'])
+def ok_webhook():
+    # no-op for OK webhooks
+    return jsonify({})
 
 @app.route('/')
 def index():
     return send_from_directory('templates', 'index.html')
 
-@app.route('/webhook', methods=['POST'])
-def ok_webhook():
-    # Webhook from OK (no-op for now)
-    return jsonify({})
-
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
-    logging.info(f"Starting app on port {port}")
+    logging.info(f"Starting on port {port}")
     app.run(host='0.0.0.0', port=port)
