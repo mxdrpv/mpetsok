@@ -185,7 +185,7 @@ def telegram_webhook():
                 kb = [[{'text': 'Добавить аккаунт', 'callback_data': 'add_account'}]]
                 send_telegram(cid, 'Сначала авторизуйся в ОК', {'inline_keyboard': kb})
             else:
-                kb = [[{'text': 'ON', 'callback_data': 'on'}], [{'text': 'OFF', 'callback_data': 'off'}]
+                kb = [[{'text': 'ON', 'callback_data': 'on'}], [{'text': 'OFF', 'callback_data': 'off'}]]
                 send_telegram(cid, 'Управление авто-режимом', {'inline_keyboard': kb})
     return jsonify(ok=True)
 
