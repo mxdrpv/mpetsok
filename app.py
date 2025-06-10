@@ -5,6 +5,7 @@ import hashlib
 import requests
 import logging
 from flask import Flask, request, jsonify, send_from_directory, redirect
+import uuid
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -17,6 +18,9 @@ OK_SECRET_KEY = os.getenv('OK_SECRET_KEY')
 OK_APP_ID     = os.getenv('OK_APP_ID')
 MPETS_API_URL = os.getenv('MPETS_API_URL')
 BOT_TOKEN     = os.getenv('BOT_TOKEN')  # Telegram bot token
+
+# Временное хранилище state для OAuth
+STATE_MAP = {}
 
 ### Утилиты ###
 def make_sig(params: dict) -> str:
@@ -89,12 +93,16 @@ def index():
 def oauth_callback():
     # Обработка OAuth callback от ОК
     code = request.args.get('code')
-    if not code:
-        logging.error("OAuth callback without code")
+    state = request.args.get('state')
+    if not code or not state:
+        logging.error("OAuth callback missing code or state: code=%s state=%s", code, state)
         return "Недостаточно параметров для авторизации", 400
-    logging.info("OAuth callback code: %s", code)
+    # Получаем Telegram chat_id по state
+    chat_id = STATE_MAP.pop(state, None)
+    if not chat_id:
+        logging.error("Invalid or expired OAuth state: %s", state)
+    logging.info("OAuth callback code: %s, state: %s", code, state)
     try:
-        # Обмен кода на токен через POST-запрос
         resp = requests.post('https://api.ok.ru/oauth/token.do', data={
             'client_id':     OK_APP_ID,
             'client_secret': OK_SECRET_KEY,
@@ -105,8 +113,11 @@ def oauth_callback():
         resp.raise_for_status()
         data = resp.json()
         logging.info("OAuth token response: %s", data)
-        # TODO: сохранить data['access_token'], data['refresh_token'], data['user_id'] в БД
-        # Закрываем окно для пользователя после успешной авторизации
+        access_token = data.get('access_token')
+        user_id = data.get('user_id') or data.get('session_key')
+        # TODO: сохранить access_token и user_id для Telegram chat_id в БД
+        if chat_id:
+            send_telegram(chat_id, 'Авторизация ОК прошла успешно! Аккаунт добавлен.')
         return ('<html><body>'
                 '<script>window.close();</script>'
                 'Авторизация успешна! Вы можете вернуться в Telegram.'
@@ -120,7 +131,6 @@ def ok_webhook():
     data = request.json.get('notification', {})
     logging.info("OK webhook data: %s", data)
     ntype = data.get('type')
-
     if ntype == 'message':
         msg = data['message']
         uid = msg['sender']['uid']
@@ -129,7 +139,6 @@ def ok_webhook():
         if handler:
             return send_ok(uid, handler(uid))
         return send_main_menu(uid)
-
     if ntype == 'click':
         uid = data['uid']
         payload = data.get('payload', '').strip().lower()
@@ -137,7 +146,6 @@ def ok_webhook():
         if handler:
             return send_ok(uid, handler(uid))
         return send_ok(uid, 'Не понимаю, бро… Вот кнопки, жми:', MAIN_MENU_TEMPLATE)
-
     return jsonify({'error': 'unsupported event'}), 400
 
 ### Telegram Webhook ###
@@ -163,28 +171,27 @@ def telegram_webhook():
             json={'callback_query_id': query.get('id')}
         )
         if data == 'add_account':
-            # OAuth authorization via Telegram Web App
+            # Генерим state для OAuth
+            state = uuid.uuid4().hex
+            STATE_MAP[state] = chat_id
             oauth_url = (
                 f"https://connect.ok.ru/oauth/authorize?client_id={OK_APP_ID}"
                 f"&redirect_uri=https://mpetsok.onrender.com/oauth/callback"
                 f"&scope=VALUABLE_ACCESS,LONG_ACCESS_TOKEN"
                 f"&response_type=code"
+                f"&state={state}"
             )
-            # Используем web_app, чтобы открыть OAuth попап внутри Telegram
             web_app_button = {'text': 'Авторизоваться в ОК', 'web_app': {'url': oauth_url}}
             keyboard = [[web_app_button]]
             send_telegram(chat_id, 'Нажми, чтобы авторизоваться:', {'inline_keyboard': keyboard})
         elif data == 'manage_accounts':
             send_telegram(chat_id, 'Управление аккаунтами пока не доступно.', None)
         return jsonify({'ok': True})
-
     msg = update.get('message') or update.get('edited_message')
     if not msg:
         return jsonify({'ok': True})
-
     chat_id = msg['chat']['id']
     text = msg.get('text', '').strip().lower()
-
     if text == '/start':
         keyboard = [
             [{'text': 'Добавить аккаунт', 'callback_data': 'add_account'}],
@@ -197,7 +204,6 @@ def telegram_webhook():
             send_telegram(chat_id, handler(str(chat_id)))
         else:
             send_telegram(chat_id, 'Не понимаю, бро…', None)
-
     return jsonify({'ok': True})
 
 if __name__ == '__main__':
