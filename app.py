@@ -16,7 +16,7 @@ OK_PUBLIC_KEY = os.getenv('OK_PUBLIC_KEY')
 OK_SECRET_KEY = os.getenv('OK_SECRET_KEY')
 OK_APP_ID     = os.getenv('OK_APP_ID')
 MPETS_API_URL = os.getenv('MPETS_API_URL')
-BOT_TOKEN  = os.getenv('BOT_TOKEN')  # Telegram bot token
+BOT_TOKEN     = os.getenv('BOT_TOKEN')  # Telegram bot token
 
 ### Утилиты ###
 def make_sig(params: dict) -> str:
@@ -98,7 +98,6 @@ def oauth_callback():
     })
     data = resp.json()
     logging.info("OAuth token response: %s", data)
-    # Сохраняем data['access_token'], data['refresh_token'], data['user_id'] в БД
     return 'Авторизация успешна! Можешь закрыть это окно.'
 
 @app.route('/webhook', methods=['POST'])
@@ -140,19 +139,18 @@ def send_telegram(chat_id, text, reply_markup=None):
 def telegram_webhook():
     update = request.json
     logging.info("Telegram update received: %s", update)
-    # Обработка нажатий inline-кнопок
     if 'callback_query' in update:
         query = update['callback_query']
         chat_id = query['message']['chat']['id']
         data = query.get('data')
-        # Подтверждаем запрос, чтобы исчез спиннер
         requests.post(
             f'https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery',
             json={'callback_query_id': query.get('id')}
         )
         if data == 'add_account':
             url = f'https://ok.ru/game/{OK_APP_ID}'
-            keyboard = [[{'text': 'Авторизоваться в ОК', 'url': url}]]
+            # Используем Web App кнопку, чтобы открыть мини-приложение прямо в Telegram
+            keyboard = [[{'text': 'Авторизоваться в ОК', 'web_app': {'url': url}}]]
             send_telegram(chat_id, 'Нажми, чтобы добавить аккаунт:', {'inline_keyboard': keyboard})
         elif data == 'manage_accounts':
             send_telegram(chat_id, 'Управление аккаунтами пока не доступно.', None)
