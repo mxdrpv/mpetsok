@@ -129,7 +129,7 @@ def ok_webhook():
 ### Telegram Webhook ###
 
 def send_telegram(chat_id, text, reply_markup=None):
-    url = f'https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage'
+    url = f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage'
     payload = {'chat_id': chat_id, 'text': text}
     if reply_markup:
         payload['reply_markup'] = reply_markup
@@ -147,7 +147,7 @@ def telegram_webhook():
         data = query.get('data')
         # Подтверждаем запрос, чтобы исчез спиннер
         requests.post(
-            f'https://api.telegram.org/bot{TG_BOT_TOKEN}/answerCallbackQuery',
+            f'https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery',
             json={'callback_query_id': query.get('id')}
         )
         if data == 'add_account':
