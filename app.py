@@ -3,7 +3,11 @@ load_dotenv()
 import os
 import hashlib
 import requests
+import logging
 from flask import Flask, request, jsonify, send_from_directory, redirect
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 app = Flask(__name__)
 
@@ -24,7 +28,9 @@ def ok_api_request(method: str, params: dict) -> dict:
     base = {'method': method, 'application_key': OK_PUBLIC_KEY, 'format': 'json'}
     base.update(params)
     base['sig'] = make_sig(base)
-    return requests.post('https://api.ok.ru/fb.do', data=base).json()
+    logging.info("OK API Request: %s with %s", method, params)
+    resp = requests.post('https://api.ok.ru/fb.do', data=base)
+    return resp.json()
 
 # Отправка сообщений от сообщества
 def send_ok(uid: str, text: str, template: dict = None):
@@ -76,11 +82,13 @@ def send_main_menu(uid: str):
 ### Роуты для OK ###
 @app.route('/')
 def index():
+    logging.info("Root path accessed")
     return send_from_directory('templates', 'index.html')
 
 @app.route('/oauth/callback')
 def oauth_callback():
     code = request.args.get('code')
+    logging.info("OAuth callback code: %s", code)
     resp = requests.get('https://api.ok.ru/oauth/token.do', params={
         'client_id':     OK_APP_ID,
         'client_secret': OK_SECRET_KEY,
@@ -89,12 +97,14 @@ def oauth_callback():
         'code':          code
     })
     data = resp.json()
+    logging.info("OAuth token response: %s", data)
     # Сохраняем data['access_token'], data['refresh_token'], data['user_id'] в БД
     return 'Авторизация успешна! Можешь закрыть это окно.'
 
 @app.route('/webhook', methods=['POST'])
 def ok_webhook():
     data = request.json.get('notification', {})
+    logging.info("OK webhook data: %s", data)
     ntype = data.get('type')
 
     if ntype == 'message':
@@ -123,11 +133,13 @@ def send_telegram(chat_id, text, reply_markup=None):
     payload = {'chat_id': chat_id, 'text': text}
     if reply_markup:
         payload['reply_markup'] = reply_markup
+    logging.info("Sending Telegram message: %s to %s", text, chat_id)
     requests.post(url, json=payload)
 
 @app.route('/telegram_webhook', methods=['POST'])
 def telegram_webhook():
     update = request.json
+    logging.info("Telegram update received: %s", update)
     # Обработка нажатий inline-кнопок
     if 'callback_query' in update:
         query = update['callback_query']
@@ -170,4 +182,5 @@ def telegram_webhook():
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
+    logging.info("Starting app on port %s", port)
     app.run(host='0.0.0.0', port=port)
